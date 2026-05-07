@@ -20,11 +20,15 @@ events = []
 incidents = []
 
 # =========================
+# AWS Configuration
+# =========================
+AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+
+# =========================
 # DynamoDB Configuration
 # =========================
 DYNAMODB_ENABLED = os.getenv("DYNAMODB_ENABLED", "false").lower() == "true"
 DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE", "CloudIncidents")
-AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 
 dynamodb_table = None
 
@@ -46,14 +50,30 @@ logger = logging.getLogger("cloud-incident-response")
 logger.setLevel(logging.INFO)
 
 if CLOUDWATCH_ENABLED:
+    logs_client = boto3.client("logs", region_name=AWS_REGION)
+
     cloudwatch_handler = watchtower.CloudWatchLogHandler(
         log_group_name=CLOUDWATCH_LOG_GROUP,
-        stream_name="ec2-backend",
-        create_log_group=True
+        log_stream_name="ec2-backend",
+        create_log_group=True,
+        boto3_client=logs_client
     )
+
     logger.addHandler(cloudwatch_handler)
 else:
     logging.basicConfig(level=logging.INFO)
+
+
+# =========================
+# SNS Configuration
+# =========================
+SNS_ENABLED = os.getenv("SNS_ENABLED", "false").lower() == "true"
+SNS_TOPIC_ARN = os.getenv("SNS_TOPIC_ARN")
+
+sns_client = None
+
+if SNS_ENABLED and SNS_TOPIC_ARN:
+    sns_client = boto3.client("sns", region_name=AWS_REGION)
 
 
 # =========================
@@ -100,6 +120,8 @@ def storage_status():
         "aws_region": AWS_REGION,
         "cloudwatch_enabled": CLOUDWATCH_ENABLED,
         "cloudwatch_log_group": CLOUDWATCH_LOG_GROUP,
+        "sns_enabled": SNS_ENABLED,
+        "sns_topic_configured": SNS_TOPIC_ARN is not None,
         "local_incident_count": len(incidents)
     }
 
@@ -253,6 +275,9 @@ def create_incident(
     if DYNAMODB_ENABLED:
         save_incident_to_dynamodb(incident)
 
+    if SNS_ENABLED and incident["severity"] in ["High", "Critical"]:
+        send_sns_alert(incident)
+
     return incident
 
 
@@ -282,6 +307,54 @@ def save_incident_to_dynamodb(incident: dict):
 
         logger.error({
             "message": "Failed to save incident to DynamoDB",
+            "incident_id": incident["incident_id"],
+            "error": str(error)
+        })
+
+
+def send_sns_alert(incident: dict):
+    if not sns_client or not SNS_TOPIC_ARN:
+        logger.warning({
+            "message": "SNS alert skipped because SNS is not configured",
+            "incident_id": incident["incident_id"]
+        })
+        return
+
+    subject = f"[{incident['severity']}] Cloud Incident Detected"
+
+    message = f"""
+Cloud Incident Response System Alert
+
+Incident ID: {incident['incident_id']}
+Incident Type: {incident['incident_type']}
+Severity: {incident['severity']}
+Source IP: {incident['source_ip']}
+Response Action: {incident['response_action']}
+Status: {incident['status']}
+Created At: {incident['created_at']}
+
+Details:
+{json.dumps(incident['details'], indent=2)}
+"""
+
+    try:
+        sns_client.publish(
+            TopicArn=SNS_TOPIC_ARN,
+            Subject=subject,
+            Message=message
+        )
+
+        logger.info({
+            "message": "SNS alert sent",
+            "incident_id": incident["incident_id"],
+            "severity": incident["severity"]
+        })
+
+    except (BotoCoreError, ClientError, NoCredentialsError) as error:
+        incident["sns_alert_error"] = str(error)
+
+        logger.error({
+            "message": "Failed to send SNS alert",
             "incident_id": incident["incident_id"],
             "error": str(error)
         })
