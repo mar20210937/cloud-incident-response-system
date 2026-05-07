@@ -6,21 +6,22 @@ from collections import defaultdict
 import os
 import uuid
 import json
+import logging
 
 import boto3
+import watchtower
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 
 
 app = FastAPI(title="Cloud Incident Response System")
 
-# Local in-memory storage.
-# This keeps the app working locally even when DynamoDB is disabled.
+# Temporary in-memory storage
 events = []
 incidents = []
 
-# DynamoDB configuration.
-# Locally this is disabled by default.
-# On EC2, we will enable it using environment variables.
+# =========================
+# DynamoDB Configuration
+# =========================
 DYNAMODB_ENABLED = os.getenv("DYNAMODB_ENABLED", "false").lower() == "true"
 DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE", "CloudIncidents")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
@@ -32,10 +33,36 @@ if DYNAMODB_ENABLED:
     dynamodb_table = dynamodb.Table(DYNAMODB_TABLE_NAME)
 
 
-# Trackers for time-window detection
+# =========================
+# CloudWatch Configuration
+# =========================
+CLOUDWATCH_ENABLED = os.getenv("CLOUDWATCH_ENABLED", "false").lower() == "true"
+CLOUDWATCH_LOG_GROUP = os.getenv(
+    "CLOUDWATCH_LOG_GROUP",
+    "/cloud-incident-response/backend"
+)
+
+logger = logging.getLogger("cloud-incident-response")
+logger.setLevel(logging.INFO)
+
+if CLOUDWATCH_ENABLED:
+    cloudwatch_handler = watchtower.CloudWatchLogHandler(
+        log_group_name=CLOUDWATCH_LOG_GROUP,
+        stream_name="ec2-backend",
+        create_log_group=True
+    )
+    logger.addHandler(cloudwatch_handler)
+else:
+    logging.basicConfig(level=logging.INFO)
+
+
+# =========================
+# Detection Trackers
+# =========================
 failed_login_tracker: Dict[str, List[datetime]] = defaultdict(list)
 invalid_token_tracker: Dict[str, List[datetime]] = defaultdict(list)
 request_rate_tracker: Dict[str, List[datetime]] = defaultdict(list)
+
 
 # Safety control: trusted IPs should not be blocked
 ALLOWLISTED_IPS = {
@@ -69,8 +96,10 @@ def health_check():
 def storage_status():
     return {
         "dynamodb_enabled": DYNAMODB_ENABLED,
-        "table_name": DYNAMODB_TABLE_NAME,
-        "region": AWS_REGION,
+        "dynamodb_table": DYNAMODB_TABLE_NAME,
+        "aws_region": AWS_REGION,
+        "cloudwatch_enabled": CLOUDWATCH_ENABLED,
+        "cloudwatch_log_group": CLOUDWATCH_LOG_GROUP,
         "local_incident_count": len(incidents)
     }
 
@@ -79,13 +108,26 @@ def storage_status():
 def receive_event(event: Event):
     event_time = parse_event_time(event.timestamp)
 
-    event_data = event.dict()
+    event_data = event.model_dump()
     event_data["processed_at"] = event_time.isoformat()
     events.append(event_data)
+
+    logger.info({
+        "message": "Event received",
+        "event_type": event.event_type,
+        "source_ip": event.source_ip,
+        "processed_at": event_time.isoformat()
+    })
 
     detected_incident = None
 
     if event.source_ip in ALLOWLISTED_IPS:
+        logger.info({
+            "message": "Allowlisted IP event ignored",
+            "source_ip": event.source_ip,
+            "event_type": event.event_type
+        })
+
         return {
             "message": "Event received but source IP is allowlisted",
             "incident_detected": False,
@@ -140,6 +182,7 @@ def get_incidents():
             items = response.get("Items", [])
 
             formatted_items = []
+
             for item in items:
                 if "details" in item and isinstance(item["details"], str):
                     try:
@@ -152,6 +195,11 @@ def get_incidents():
             return formatted_items
 
         except (BotoCoreError, ClientError, NoCredentialsError) as error:
+            logger.error({
+                "message": "Failed to read from DynamoDB",
+                "error": str(error)
+            })
+
             return {
                 "message": "Failed to read from DynamoDB. Returning local incidents instead.",
                 "error": str(error),
@@ -192,6 +240,16 @@ def create_incident(
 
     incidents.append(incident)
 
+    logger.info({
+        "message": "Incident detected",
+        "incident_id": incident["incident_id"],
+        "incident_type": incident["incident_type"],
+        "source_ip": incident["source_ip"],
+        "severity": incident["severity"],
+        "response_action": incident["response_action"],
+        "created_at": incident["created_at"]
+    })
+
     if DYNAMODB_ENABLED:
         save_incident_to_dynamodb(incident)
 
@@ -213,8 +271,20 @@ def save_incident_to_dynamodb(incident: dict):
 
         dynamodb_table.put_item(Item=dynamodb_item)
 
+        logger.info({
+            "message": "Incident saved to DynamoDB",
+            "incident_id": incident["incident_id"],
+            "table": DYNAMODB_TABLE_NAME
+        })
+
     except (BotoCoreError, ClientError, NoCredentialsError) as error:
         incident["dynamodb_save_error"] = str(error)
+
+        logger.error({
+            "message": "Failed to save incident to DynamoDB",
+            "incident_id": incident["incident_id"],
+            "error": str(error)
+        })
 
 
 def detect_brute_force(source_ip: str, event_time: datetime):
@@ -311,7 +381,11 @@ def detect_high_request_rate(source_ip: str, event_time: datetime, request_count
     return None
 
 
-def detect_service_failure(source_ip: str, service_name: Optional[str], event_time: datetime):
+def detect_service_failure(
+    source_ip: str,
+    service_name: Optional[str],
+    event_time: datetime
+):
     return create_incident(
         incident_type="service_failure",
         source_ip=source_ip,
