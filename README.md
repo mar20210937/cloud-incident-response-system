@@ -18,8 +18,38 @@ It receives security and system events, detects suspicious behavior using rule-b
 
 ## Run Locally
 
+Run this command:
+
 ```bash
 uvicorn app.main:app --reload
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+## Run with Docker
+
+Build the image:
+
+```bash
+docker build -t cloud-incident-backend .
+```
+
+Run the container:
+
+```bash
+docker run --rm -p 8000:8000 cloud-incident-backend
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
 ## AWS Deployment
 
 The backend was deployed on an AWS EC2 instance using Docker.
@@ -45,6 +75,19 @@ docker run -d --name cloud-incident-backend -p 8000:8000 \
 -e SNS_ENABLED=true \
 -e SNS_TOPIC_ARN="arn:aws:sns:us-east-1:870676149540:CloudIncidentAlerts" \
 cloud-incident-backend
+```
 
+### Test URLs
+
+```text
 http://EC2_PUBLIC_IP:8000/docs
 http://EC2_PUBLIC_IP:8000/storage/status
+```
+
+### Main Detection Rules
+
+- Failed login attempts: 5 failed logins within 60 seconds → High severity.
+- Invalid token attempts: 3 invalid token attempts → Critical severity.
+- High request rate: 100 requests per minute → Medium severity.
+- Service failure: health check failure → Critical severity.
+- System overload: CPU above 85% for 120 seconds → High severity.
