@@ -73,7 +73,7 @@ docker run -d --name cloud-incident-backend -p 8000:8000 \
 -e CLOUDWATCH_ENABLED=true \
 -e CLOUDWATCH_LOG_GROUP=/cloud-incident-response/backend \
 -e SNS_ENABLED=true \
--e SNS_TOPIC_ARN="arn:aws:sns:us-east-1:870676149540:CloudIncidentAlerts" \
+-e SNS_TOPIC_ARN="arn:aws:sns:us-east-1:<account-id>:CloudIncidentAlerts"
 cloud-incident-backend
 ```
 
