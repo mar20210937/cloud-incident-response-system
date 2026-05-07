@@ -3,13 +3,34 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from collections import defaultdict
+import os
+import uuid
+import json
+
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
+
 
 app = FastAPI(title="Cloud Incident Response System")
 
-# Temporary in-memory storage
-# Later, this will be replaced with AWS DynamoDB
+# Local in-memory storage.
+# This keeps the app working locally even when DynamoDB is disabled.
 events = []
 incidents = []
+
+# DynamoDB configuration.
+# Locally this is disabled by default.
+# On EC2, we will enable it using environment variables.
+DYNAMODB_ENABLED = os.getenv("DYNAMODB_ENABLED", "false").lower() == "true"
+DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE", "CloudIncidents")
+AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+
+dynamodb_table = None
+
+if DYNAMODB_ENABLED:
+    dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
+    dynamodb_table = dynamodb.Table(DYNAMODB_TABLE_NAME)
+
 
 # Trackers for time-window detection
 failed_login_tracker: Dict[str, List[datetime]] = defaultdict(list)
@@ -30,7 +51,6 @@ class Event(BaseModel):
     status: Optional[str] = None
     timestamp: Optional[str] = None
 
-    # Optional fields for system/performance events
     request_count: Optional[int] = 1
     cpu_percent: Optional[float] = None
     duration_seconds: Optional[int] = None
@@ -42,6 +62,16 @@ def health_check():
     return {
         "status": "running",
         "service": "Cloud Incident Response System"
+    }
+
+
+@app.get("/storage/status")
+def storage_status():
+    return {
+        "dynamodb_enabled": DYNAMODB_ENABLED,
+        "table_name": DYNAMODB_TABLE_NAME,
+        "region": AWS_REGION,
+        "local_incident_count": len(incidents)
     }
 
 
@@ -104,6 +134,30 @@ def get_events():
 
 @app.get("/incidents")
 def get_incidents():
+    if DYNAMODB_ENABLED:
+        try:
+            response = dynamodb_table.scan()
+            items = response.get("Items", [])
+
+            formatted_items = []
+            for item in items:
+                if "details" in item and isinstance(item["details"], str):
+                    try:
+                        item["details"] = json.loads(item["details"])
+                    except json.JSONDecodeError:
+                        pass
+
+                formatted_items.append(item)
+
+            return formatted_items
+
+        except (BotoCoreError, ClientError, NoCredentialsError) as error:
+            return {
+                "message": "Failed to read from DynamoDB. Returning local incidents instead.",
+                "error": str(error),
+                "local_incidents": incidents
+            }
+
     return incidents
 
 
@@ -126,6 +180,7 @@ def create_incident(
     details: Optional[dict] = None
 ):
     incident = {
+        "incident_id": str(uuid.uuid4()),
         "incident_type": incident_type,
         "source_ip": source_ip,
         "severity": severity,
@@ -136,7 +191,30 @@ def create_incident(
     }
 
     incidents.append(incident)
+
+    if DYNAMODB_ENABLED:
+        save_incident_to_dynamodb(incident)
+
     return incident
+
+
+def save_incident_to_dynamodb(incident: dict):
+    try:
+        dynamodb_item = {
+            "incident_id": incident["incident_id"],
+            "incident_type": incident["incident_type"],
+            "source_ip": incident["source_ip"],
+            "severity": incident["severity"],
+            "response_action": incident["response_action"],
+            "status": incident["status"],
+            "created_at": incident["created_at"],
+            "details": json.dumps(incident["details"])
+        }
+
+        dynamodb_table.put_item(Item=dynamodb_item)
+
+    except (BotoCoreError, ClientError, NoCredentialsError) as error:
+        incident["dynamodb_save_error"] = str(error)
 
 
 def detect_brute_force(source_ip: str, event_time: datetime):
