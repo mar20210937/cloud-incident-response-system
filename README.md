@@ -1,6 +1,6 @@
 # Cloud Incident Response System
 
-This project is a Dockerized cloud incident response backend built using FastAPI.
+This project is a Dockerized Cloud Incident Response backend built using FastAPI.
 
 It receives security and system events, detects suspicious behavior using rule-based logic, classifies incidents by severity, and records response actions.
 
