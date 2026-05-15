@@ -19,14 +19,14 @@ app = FastAPI(title="Cloud Incident Response System")
 events = []
 incidents = []
 
-# =========================
+# ========================
 # AWS Configuration
-# =========================
+# ========================
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 
-# =========================
+# ========================
 # DynamoDB Configuration
-# =========================
+# ========================
 DYNAMODB_ENABLED = os.getenv("DYNAMODB_ENABLED", "false").lower() == "true"
 DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE", "CloudIncidents")
 
