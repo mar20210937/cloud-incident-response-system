@@ -37,9 +37,9 @@ if DYNAMODB_ENABLED:
     dynamodb_table = dynamodb.Table(DYNAMODB_TABLE_NAME)
 
 
-# =========================
+# ========================
 # CloudWatch Configuration
-# =========================
+# ========================
 CLOUDWATCH_ENABLED = os.getenv("CLOUDWATCH_ENABLED", "false").lower() == "true"
 CLOUDWATCH_LOG_GROUP = os.getenv(
     "CLOUDWATCH_LOG_GROUP",
@@ -64,9 +64,9 @@ else:
     logging.basicConfig(level=logging.INFO)
 
 
-# =========================
+# ========================
 # SNS Configuration
-# =========================
+# ========================
 SNS_ENABLED = os.getenv("SNS_ENABLED", "false").lower() == "true"
 SNS_TOPIC_ARN = os.getenv("SNS_TOPIC_ARN")
 
