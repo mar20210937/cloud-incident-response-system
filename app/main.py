@@ -76,9 +76,9 @@ if SNS_ENABLED and SNS_TOPIC_ARN:
     sns_client = boto3.client("sns", region_name=AWS_REGION)
 
 
-# =========================
+# ========================
 # Detection Trackers
-# =========================
+# ========================
 failed_login_tracker: Dict[str, List[datetime]] = defaultdict(list)
 invalid_token_tracker: Dict[str, List[datetime]] = defaultdict(list)
 request_rate_tracker: Dict[str, List[datetime]] = defaultdict(list)
