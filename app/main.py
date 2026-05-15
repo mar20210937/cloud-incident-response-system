@@ -19,14 +19,14 @@ app = FastAPI(title="Cloud Incident Response System")
 events = []
 incidents = []
 
-# ========================
+# =======================
 # AWS Configuration
-# ========================
+# =======================
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 
-# ========================
+# =======================
 # DynamoDB Configuration
-# ========================
+# =======================
 DYNAMODB_ENABLED = os.getenv("DYNAMODB_ENABLED", "false").lower() == "true"
 DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE", "CloudIncidents")
 
@@ -64,9 +64,9 @@ else:
     logging.basicConfig(level=logging.INFO)
 
 
-# ========================
+# =======================
 # SNS Configuration
-# ========================
+# =======================
 SNS_ENABLED = os.getenv("SNS_ENABLED", "false").lower() == "true"
 SNS_TOPIC_ARN = os.getenv("SNS_TOPIC_ARN")
 
@@ -76,9 +76,9 @@ if SNS_ENABLED and SNS_TOPIC_ARN:
     sns_client = boto3.client("sns", region_name=AWS_REGION)
 
 
-# ========================
+# =======================
 # Detection Trackers
-# ========================
+# =======================
 failed_login_tracker: Dict[str, List[datetime]] = defaultdict(list)
 invalid_token_tracker: Dict[str, List[datetime]] = defaultdict(list)
 request_rate_tracker: Dict[str, List[datetime]] = defaultdict(list)
